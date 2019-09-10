@@ -1,0 +1,22 @@
+---
+   # 设置需要的环境变量，不需要可以不写
+   envs:
+    - name: 'LANG'
+      value: 'en_US.UTF-8'
+    - name: 'bug'
+      value: 'set -eu'
+   # 设置编译的命令, 同环境变量的设置方式
+   # 如:
+   #cmds:
+   #  - name: 'do make'  步骤名称
+   #    cmd: 'make' 真实的命令,如果不在PATH中，需要写全路径
+   #  - name: 'do install'
+   #    cmd: 'make install'
+   cmds:
+     - name: 'Clean and Package'
+       cmd: 'mvn clean -U package -Dmaven.test.skip=true -Dhttps.protocols=TLSv1,TLSv1.1,TLSv1.2 || exit $?'
+     - name: 'make output dir'
+       cmd: 'mv target/demo-1.0-SNAPSHOT-all/output ./ '
+
+   # 抽包路径, 这个是必选项
+   out_dir: 'output'

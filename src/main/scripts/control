@@ -1,0 +1,242 @@
+#! /bin/sh --
+
+cd "`dirname $0`/.." || exit 1
+
+readonly WORKSPACE=`pwd`
+readonly SLEEP='sleep'
+
+readonly JDK="jdk1.8.0_111"
+readonly PIDFILE="$WORKSPACE/runtime/demo.pid"
+readonly STDOUT="$WORKSPACE/log/application.out"
+readonly MAIN2=com.example.demo.DemoApplication
+readonly CLASSPATH="$WORKSPACE/lib/demo*"
+readonly JAVA=$WORKSPACE/$JDK/bin/java
+readonly PATH="/usr/sbin:/usr/bin:/sbin:/bin:$WORKSPACE/$JDK/bin"
+
+readonly JDK_TAR="jdk-8u111-linux-x64.tar.gz"
+readonly PROC_NAME=$MAIN2
+readonly PROC_PORT_HTTP=8080
+
+
+echo "WORKSPACE:"$WORKSPACE
+
+
+    START_COMMAND2="$JAVA
+    -Xmx512m
+    -Xms512m
+    -Xmn256m
+    -XX:MaxDirectMemorySize=64m
+    -XX:+UseG1GC
+    -XX:+HeapDumpOnOutOfMemoryError
+    -XX:HeapDumpPath=runtime
+    -XX:ErrorFile=log/java_error_%p.log
+    -XX:+PrintGCDetails
+    -XX:+PrintGCApplicationStoppedTime
+    -XX:+PrintGCDateStamps
+    -XX:+PrintHeapAtGC
+    -Xloggc:log/gc.log
+    -Djava.io.tmpdir=runtime
+    -jar $CLASSPATH $MAIN2"
+
+
+echo $START_COMMAND2
+
+start_check()
+{
+    if [ -n "$PROC_PORT_HTTP" ] ; then
+        PORT_HTTP_R=$(/usr/sbin/ss -nltp "( sport = :$PROC_PORT_HTTP )" |sed 1d |awk '{print $NF}' |grep -oP "\"\w+\"" |sed "s/\"//g" |uniq)
+        if [ -n "$PORT_HTTP_R" ] ; then
+            echo "http port ok"
+            echo "running"
+            return 0
+        else
+            echo "http port not ok"
+            return 1
+        fi
+	else
+	    ps -fj ax | fgrep "${PROC_NAME}"| fgrep -v 'fgrep' | fgrep -v "vi\|vim\|tail\|tailf\|less\|more" | fgrep 'java' >/dev/null 2>&1
+        ret=$?
+        if [ $ret -eq 0 ]; then
+          echo "running"
+          return 0
+        else
+          echo "not running"
+          return 1
+        fi
+	fi
+}
+
+stop_check()
+{
+    ps -fj ax | fgrep "${PROC_NAME}"| fgrep -v 'fgrep' | fgrep -v "vi\|vim\|tail\|tailf\|less\|more" | fgrep 'java' >/dev/null 2>&1
+    ret=$?
+    if [ ${ret} -ne 0 ] ; then
+      return 0
+    else
+      return 1
+    fi
+}
+
+help()
+{
+    echo "${0} <start|stop|restart|shutdown|status>"
+    exit 1
+}
+
+die()
+{
+    echo "[FAILED] ${1}"
+    exit 1
+}
+
+ok()
+{
+    echo "[OK] ${1}"
+}
+
+signal()
+{
+    ps -fj ax | fgrep ${PROC_NAME} | fgrep -v "fgrep" | fgrep -v "vi\|vim\|tail\|tailf\|less\|more" | fgrep 'java' | awk '{print "kill -9 " $2}' | sh
+}
+
+term()
+{
+    ps -fj ax | fgrep ${PROC_NAME} | fgrep -v "fgrep" | fgrep -v "vi\|vim\|tail\|tailf\|less\|more" | fgrep 'java' | awk '{print "kill -15 " $2}' | sh
+}
+
+start()
+{
+    start_check
+    if [ $? -eq 0 ]; then
+        ok "start"
+        return 0
+    fi
+
+    install
+    [ $? -ne 0 ] && die "start"
+    rm -f "$WORKSPACE/$JDK_TAR"
+
+    # when restart try signal
+    signal
+
+    echo "starting demo..."
+
+    export LC_ALL="en_US.UTF-8"
+    export LANG="en_US.UTF-8"
+
+    nohup $START_COMMAND2 1>/dev/null 2>&1 &
+    pid=$!
+    echo "$pid" >"$PIDFILE"
+
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        ${SLEEP} 1
+
+        start_check
+        if [ $? -eq 0 ]; then
+            ${SLEEP} 1
+            start_check
+            if [ $? -eq 0 ]; then
+                ok "start"
+                return 0
+            else
+                die "start"
+            fi
+        fi
+    done
+
+    die "start"
+}
+
+stop()
+{
+    stop_check
+    if [ $? -eq 0 ]; then
+        ok "stop"
+        return 0
+    fi
+
+    for i in 1 2 3 4 5; do
+        term
+        ${SLEEP} 1
+        stop_check
+        if [ $? -eq 0 ]; then
+            ok "stop"
+            return 0
+        fi
+    done
+
+    for i in 1 2 3 4 5; do
+        signal
+        ${SLEEP} 1
+        stop_check
+        if [ $? -eq 0 ]; then
+            ok "stop"
+            return 0
+        fi
+    done
+    die "stop"
+}
+
+restart()
+{
+    stop
+    start
+    return 0
+}
+
+shutdown()
+{
+    stop
+    ok "Shutdown"
+    return 0
+}
+
+status()
+{
+    start_check
+    if [ $? -eq 0 ]; then
+        echo 'Running'
+        return 0
+    else
+        echo 'Not running'
+        return 1
+    fi
+}
+
+install()
+{
+    mkdir -p $WORKSPACE/log
+    mkdir -p $WORKSPACE/runtime
+    [ -f "$WORKSPACE/installed" ] && return 0
+
+    echo "starting install jre ..."
+
+    # not install yet, so install it
+    tar -xzf "$WORKSPACE/$JDK_TAR" -C "$WORKSPACE"
+    [ $? -ne 0 ] && echo "tar $JDK_TAR error" && return 1
+
+    touch "$WORKSPACE/installed"
+    echo "install jre succsfully"
+    return 0
+}
+
+case "${1}" in
+start)
+    start
+    ;;
+stop)
+    stop
+    ;;
+restart)
+    restart
+    ;;
+shutdown)
+    shutdown
+    ;;
+status)
+    status
+    ;;
+*)
+    help
+    ;;
+esac
